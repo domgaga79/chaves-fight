@@ -623,15 +623,12 @@ document.addEventListener("DOMContentLoaded", () => {
   })();
 
   const VOL = {
-    music: 0.55,
-    hit:   0.70,
-    madrugaPunch: 1.5,
-    jump:  0.55,
-    ko:    0.22,
+    menu: 0.24,
+    hit: 0.55,
+    jump: 0.55,
+    ko: 0.38,
     round: 0.40,
-    win:   1.2,
-    lose:  0.40,
-    whiff: 1
+    whiff: 1.2
   };
 
   const FADE_OUT_MS = 3000;
@@ -1042,7 +1039,7 @@ document.addEventListener("DOMContentLoaded", () => {
       p = selectMusic.play();
       if (p && typeof p.catch === "function") await p.catch(()=>{});
 
-      fadeHtmlAudio(selectMusic, Math.min(1, VOL.music), 650);
+      fadeHtmlAudio(selectMusic, VOL.menu, 650);
       selectMusicAudible = true;
 
       //if (tapAudio) tapAudio.style.display = "none";
@@ -1217,8 +1214,26 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   const PUNCH_BY_ATTACKER = {
-    madruga: "audio/chars/madruga_toma.mp3"
+    madruga: { url: "audio/chars/madruga_toma.mp3", gain: 1.05 },
+    barriga: { url: "audio/chars/barriga_punch.wav", gain: 0.95 }
   };
+
+  // Ganhos por gravação para compensar diferenças de nível entre os arquivos.
+  const STAGE_GAIN = {
+    vila: 0.62, "3patio": 0.40, florinda: 0.33, churros: 0.36,
+    escola: 0.33, diversoes: 0.44, restaurante: 0.36, barriga: 0.32, parque: 0.44
+  };
+
+  const WIN_GAIN = {
+    chaves: 0.55, quico: 0.39, nhonho: 0.8, girafales: 0.39, florinda: 0.42,
+    madruga: 0.58, pops: 1.15, chiquinha: 0.46, barriga: 0.9
+  };
+
+  const LOSE_GAIN = {
+    chaves: 0.38, quico: 0.42, girafales: 0.54, florinda: 0.30,
+    madruga: 0.38, pops: 0.46, chiquinha: 0.70
+  };
+  const SPECIAL_WIN_GAIN = { "quico|madruga": 0.46, "florinda|quico": 0.40 };
 
   const WINLOSE_DIR = "audio/falas/";
   function winFile(id){  return `${WINLOSE_DIR}${id}_wins.wav`; }
@@ -1248,20 +1263,21 @@ document.addEventListener("DOMContentLoaded", () => {
     const buf = await AudioEngine.load(key, url);
     if (!buf) return false;
 
-    AudioEngine.music = AudioEngine.play(key, { volume: VOL.music, loop: true });
+    AudioEngine.music = AudioEngine.play(key, { volume: STAGE_GAIN[stageName] ?? 0.38, loop: true });
     return true;
   }
 
-  async function playWinLose(kind, charId, urlOverride=null){
+  async function playWinLose(kind, charId, urlOverride=null, gainOverride=null){
     if (!audioUnlocked) return;
-    if (!charId) return;
+    const gain = gainOverride ?? (kind === "win" ? WIN_GAIN[charId] : LOSE_GAIN[charId]);
+    if (gain === undefined) return;
 
     const url = urlOverride || ((kind === "win") ? winFile(charId) : loseFile(charId));
     const key = `${kind}_${charId}_${url}`;
     const buf = await AudioEngine.load(key, url);
     if (!buf) return;
 
-    AudioEngine.play(key, { volume: (kind === "win") ? VOL.win : VOL.lose });
+    AudioEngine.play(key, { volume: gain });
   }
 
   const stage = { bg: null };
@@ -1434,6 +1450,7 @@ document.addEventListener("DOMContentLoaded", () => {
       this.punching = false;
       this.punchTimeLeft = 0;
       this.missedPunches = 0;
+      this.punchVoiceCooldown = 0;
       this.facingLeft = false;
       this._punchSfxCd = 0;
 
@@ -1461,6 +1478,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (this.hp <= 0 || !roundActive) return;
 
       this.punchTimeLeft = Math.max(0, this.punchTimeLeft - delta);
+      this.punchVoiceCooldown = Math.max(0, this.punchVoiceCooldown - delta);
       this.punching = this.punchTimeLeft > 0.00001;
       if (this._punchSfxCd > 0) this._punchSfxCd--;
       if (this.hitFlash > 0) this.hitFlash--;
@@ -1546,9 +1564,10 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         if (hit) {
-          if (this.key === "madruga") {
-            const punchUrl = PUNCH_BY_ATTACKER.madruga;
-            playSfx("hit", VOL.madrugaPunch, punchUrl);
+          const punchSound = PUNCH_BY_ATTACKER[this.key];
+          if (punchSound && this.punchVoiceCooldown === 0) {
+            this.punchVoiceCooldown = 2;
+            playSfx("hit", punchSound.gain, punchSound.url);
           }
           opp.takeDamage(10, this.facingLeft ? -1 : 1);
         } else {
@@ -1813,7 +1832,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const specialKey = `${winner.key}|${loser.key}`;
     const winUrl = specialMap[specialKey] || null;
 
-    setTimeout(() => playWinLose("win", winner.key, winUrl), 420);
+    setTimeout(() => playWinLose("win", winner.key, winUrl, SPECIAL_WIN_GAIN[specialKey]), 420);
 
     if (winner === p1) p1Wins++;
     else p2Wins++;
