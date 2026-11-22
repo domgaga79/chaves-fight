@@ -557,6 +557,9 @@ document.addEventListener("DOMContentLoaded", () => {
   const WALK_FRAME_MS = 120;
   const SPEED_MULT = 0.65;
   const JUMP_MULT = 0.85;
+  const AIR_SPEED_MULT = 1.4;
+  const AIR_ATTACK_CLEARANCE = 48;
+  const AIR_ATTACK_REACH = 155;
 
   function clamp01(v){ return Math.max(0, Math.min(1, v)); }
 
@@ -1454,7 +1457,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const prevX = this.x;
 
-      this.x += (vx * this.speed + this.knockback) * (delta * 120);
+      const horizontalSpeed = this.speed * (this.isJumping ? AIR_SPEED_MULT : 1);
+      this.x += (vx * horizontalSpeed + this.knockback) * (delta * 120);
       this.y += vy * this.speed * (delta * 120);
       this.knockback *= 0.85;
 
@@ -1479,7 +1483,11 @@ document.addEventListener("DOMContentLoaded", () => {
         const distH = Math.abs(this.x + this.w / 2 - (opp.x + opp.w / 2));
         const distV = Math.abs(this.y + this.z - (opp.y + opp.z));
 
-        let hit = (distH < this.range && distV < 110);
+        const heightAdvantage = opp.z - this.z;
+        const diving = this.isJumping && this.jumpV > 0 && heightAdvantage >= AIR_ATTACK_CLEARANCE;
+        const outOfGroundReach = !this.isJumping && heightAdvantage <= -AIR_ATTACK_CLEARANCE;
+        let hit = distH < this.range && !outOfGroundReach &&
+          distV < (diving ? AIR_ATTACK_REACH : 110);
 
         if (!isMobile) {
           const DESKTOP_DEPTH_TOL = 0.18;
@@ -1670,7 +1678,10 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  let arcadeJumpReadyAt = 0;
+
   function initBattle() {
+    arcadeJumpReadyAt = 0;
     const p1Key = arcade?.player ?? selectedP1;
     const p2Key = arcade ? arcade.opponents.find(key => !arcade.defeated.has(key)) : selectedP2;
 
@@ -1742,25 +1753,29 @@ document.addEventListener("DOMContentLoaded", () => {
     btnReset.addEventListener("click", doReset, { passive:false });
   }
 
-  function arcadeAIForP2(){
-
-    keys["arrowup"] = false;
-    keys["arrowdown"] = false;
-    keys["arrowleft"] = false;
-    keys["arrowright"] = false;
-    keys["enter"] = false;
-    keys["shift"] = false;
-
+  function arcadeAIForP2(now){
     const dx = p1.x - p2.x;
     const dy = p1.y - p2.y;
+    const distance = Math.abs(dx);
+    const aligned = Math.abs(dy) <= 10;
+    const heightAdvantage = p1.z - p2.z;
+    const jumpIn = aligned && !p2.isJumping && !p1.isJumping &&
+      now >= arcadeJumpReadyAt && distance < p2.range + 100 &&
+      (distance > p2.range - 45 || keys[p1.controls.punch] || p1.punching);
+    const movingCloser = distance > (p2.isJumping || jumpIn ? 60 : p2.range - 35);
 
-    if (Math.abs(dx) > 140) {
-      keys[dx < 0 ? "arrowleft" : "arrowright"] = true;
-    } else {
-      if (Math.abs(dy) > 20) keys[dy < 0 ? "arrowup" : "arrowdown"] = true;
-      if (Math.random() > 0.86) keys["enter"] = true;
-      if (Math.random() > 0.975) keys["shift"] = true;
-    }
+    keys["arrowup"] = !aligned && dy < 0;
+    keys["arrowdown"] = !aligned && dy > 0;
+    keys["arrowleft"] = movingCloser && dx < 0;
+    keys["arrowright"] = movingCloser && dx > 0;
+    keys["shift"] = jumpIn;
+
+    if (jumpIn) arcadeJumpReadyAt = now + 1250;
+
+    const canDive = p2.isJumping && p2.jumpV > 0 &&
+      heightAdvantage >= AIR_ATTACK_CLEARANCE + 8 && heightAdvantage <= AIR_ATTACK_REACH - 15;
+    const canPunch = !p2.isJumping && heightAdvantage > -AIR_ATTACK_CLEARANCE;
+    keys["enter"] = !jumpIn && aligned && distance < p2.range - 10 && (canDive || canPunch);
   }
 
   function drawStageBackground(){
@@ -1784,7 +1799,7 @@ document.addEventListener("DOMContentLoaded", () => {
     ctx.clearRect(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
 
     applyMobileKeysFromJoy();
-    if (roundActive && arcade) arcadeAIForP2();
+    if (roundActive && arcade) arcadeAIForP2(t);
 
     ctx.save();
     if (screenShake > 0) {
