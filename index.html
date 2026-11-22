@@ -343,6 +343,14 @@
     #arcadeOverlay::backdrop { background: rgba(5, 7, 14, .86); }
     #arcadeTitle { color: #f6cd6b; font-size: clamp(22px, 5vw, 34px); }
     #arcadeStatus { margin: 8px 0 16px; }
+    #arcadeEndingArt {
+      width: min(100%, 460px);
+      aspect-ratio: 3 / 2;
+      margin: 12px auto;
+      border-radius: 10px;
+      background: url("imagem/finais-arcade.webp") no-repeat;
+      background-size: 300% 300%;
+    }
     #arcadeRoster {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(78px, 1fr));
@@ -514,6 +522,7 @@
 
     <dialog id="arcadeOverlay" aria-labelledby="arcadeTitle" aria-describedby="arcadeStatus">
       <h2 id="arcadeTitle"></h2>
+      <div id="arcadeEndingArt" aria-hidden="true" hidden></div>
       <p id="arcadeStatus"></p>
       <ul id="arcadeRoster" aria-label="Adversários da campanha"></ul>
       <div id="arcadeCredits" hidden>
@@ -633,6 +642,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const arcadeOverlay = document.getElementById("arcadeOverlay");
   const arcadeTitle = document.getElementById("arcadeTitle");
   const arcadeStatus = document.getElementById("arcadeStatus");
+  const arcadeEndingArt = document.getElementById("arcadeEndingArt");
   const arcadeRoster = document.getElementById("arcadeRoster");
   const arcadeCredits = document.getElementById("arcadeCredits");
   const arcadeContinue = document.getElementById("arcadeContinue");
@@ -1574,6 +1584,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  // Ordem dos quadros da imagem, da esquerda para a direita e de cima para baixo.
   const ARCADE_ENDINGS = {
     chaves: "Com o troféu nas mãos, Chaves organizou um piquenique no pátio. Cada vizinho trouxe alguma coisa, e dessa vez havia sanduíche de presunto para todo mundo.",
     quico: "Quico exibiu o troféu na janela até perceber que ninguém conseguia vê-lo da rua. Levou a taça para o pátio e chamou a turma para uma foto.",
@@ -1630,6 +1641,11 @@ document.addEventListener("DOMContentLoaded", () => {
     arcadeStatus.textContent = completed ? ARCADE_ENDINGS[arcade.player]
       : `${arcade.defeated.size} de ${arcade.opponents.length} adversários derrotados` +
         (won ? "" : ` · Revanche contra ${CHAR_UI[upcoming]}`);
+    arcadeEndingArt.hidden = !completed;
+    if (completed) {
+      const tile = Object.keys(ARCADE_ENDINGS).indexOf(arcade.player);
+      arcadeEndingArt.style.backgroundPosition = `${(tile % 3) * 50}% ${Math.floor(tile / 3) * 50}%`;
+    }
     arcadeCredits.hidden = !completed;
     arcadeContinue.hidden = completed;
     arcadeContinue.textContent = won ? "Lutar" : "Tentar novamente";
