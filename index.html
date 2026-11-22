@@ -294,26 +294,92 @@
       100% { transform: scale(1); opacity: 0.9; }
     }
     
-    #btnStartGame {
+    .start-actions {
       position: fixed;
-      bottom: 10px;       /* 10px acima do rodapé */
-      left: 50%;          /* centraliza horizontalmente */
-      transform: translateX(-50%); /* corrige o alinhamento */
-      width: 180px;
-      height: 70px;
+      bottom: 10px;
+      left: 50%;
+      transform: translateX(-50%);
       z-index: 200;
-      border-radius: 14px;
-      border: 2px solid rgba(255,255,255,.2);
-      background: rgba(0,0,0,.6);
-      color: #fff;
-      font: 900 20px system-ui;
-      cursor: pointer;
-      backdrop-filter: blur(10px);
-      transition: transform .15s ease;
+      display: flex;
+      gap: 8px;
+      width: max-content;
+      max-width: calc(100vw - 20px);
     }
 
-    #btnStartGame:active{
-      transform: scale(0.95);
+    .start-actions[hidden], #arcadeOverlay [hidden] { display: none; }
+
+    .start-actions button, .arcade-actions button {
+      min-height: 44px;
+      padding: 10px 16px;
+      border: 1px solid #f6cd6b;
+      border-radius: 10px;
+      background: #141824;
+      color: #fff;
+      font: 800 16px system-ui;
+      cursor: pointer;
+    }
+
+    #btnStartGame, #arcadeContinue {
+      background: #f6cd6b;
+      color: #191323;
+    }
+
+    #arcadeOverlay {
+      position: fixed;
+      inset: 0;
+      margin: auto;
+      width: min(680px, calc(100% - 24px));
+      max-height: 90dvh;
+      overflow: auto;
+      padding: clamp(14px, 4vw, 28px);
+      border: 2px solid #f6cd6b;
+      border-radius: 18px;
+      background: #141824;
+      color: #fff;
+      text-align: center;
+      font: 16px/1.4 system-ui, sans-serif;
+    }
+
+    #arcadeOverlay::backdrop { background: rgba(5, 7, 14, .86); }
+    #arcadeTitle { color: #f6cd6b; font-size: clamp(22px, 5vw, 34px); }
+    #arcadeStatus { margin: 8px 0 16px; }
+    #arcadeRoster {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(78px, 1fr));
+      gap: 8px;
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+
+    .arcade-fighter {
+      padding: 5px;
+      border: 1px solid #596079;
+      border-radius: 8px;
+      font-size: 12px;
+    }
+
+    .arcade-fighter img {
+      display: block;
+      width: 100%;
+      aspect-ratio: 1;
+      object-fit: cover;
+      border-radius: 5px;
+      margin-bottom: 4px;
+    }
+
+    .arcade-fighter small { display: block; color: #e4e6ed; }
+    .arcade-fighter.is-defeated img { filter: grayscale(1); }
+    .arcade-fighter.is-next { border: 2px solid #f6cd6b; padding: 4px; }
+    #arcadeCredits { margin: 18px 0; }
+    #arcadeCredits img { display: block; width: 120px; margin: 0 auto 6px; }
+    #arcadeCredits a { color: #f6cd6b; }
+    .arcade-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 18px;
     }
   </style>
 </head>
@@ -441,7 +507,25 @@
       <canvas id="game" width="1280" height="720"></canvas>
     </div>
 
-    <button id="btnStartGame" type="button">START</button>
+    <div class="start-actions" id="startActions">
+      <button id="btnStartGame" type="button">START Arcade</button>
+      <button id="btnVersus" type="button" hidden>Versus 2P</button>
+    </div>
+
+    <dialog id="arcadeOverlay" aria-labelledby="arcadeTitle" aria-describedby="arcadeStatus">
+      <h2 id="arcadeTitle"></h2>
+      <p id="arcadeStatus"></p>
+      <ul id="arcadeRoster" aria-label="Adversários da campanha"></ul>
+      <div id="arcadeCredits" hidden>
+        <img src="imagem/marca_bacuri.png" alt="" />
+        <p>Desenvolvimento de Games</p>
+        <a href="https://bacuridigital.com/" target="_blank" rel="noopener">Bacuri Digital</a>
+      </div>
+      <div class="arcade-actions">
+        <button id="arcadeContinue" type="button"></button>
+        <button id="arcadeExit" type="button">Voltar à seleção</button>
+      </div>
+    </dialog>
 
     <div id="mobileHUD" aria-hidden="true">
       <div id="joyArea"></div>
@@ -473,6 +557,9 @@ document.addEventListener("DOMContentLoaded", () => {
   const WALK_FRAME_MS = 120;
   const SPEED_MULT = 0.65;
   const JUMP_MULT = 0.85;
+  const AIR_SPEED_MULT = 1.4;
+  const AIR_ATTACK_CLEARANCE = 48;
+  const AIR_ATTACK_REACH = 155;
 
   function clamp01(v){ return Math.max(0, Math.min(1, v)); }
 
@@ -541,6 +628,19 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const arenaWrap = document.getElementById("arenaWrap");
   const btnStartGame = document.getElementById("btnStartGame");
+  const btnVersus = document.getElementById("btnVersus");
+  const startActions = document.getElementById("startActions");
+  const arcadeOverlay = document.getElementById("arcadeOverlay");
+  const arcadeTitle = document.getElementById("arcadeTitle");
+  const arcadeStatus = document.getElementById("arcadeStatus");
+  const arcadeRoster = document.getElementById("arcadeRoster");
+  const arcadeCredits = document.getElementById("arcadeCredits");
+  const arcadeContinue = document.getElementById("arcadeContinue");
+
+  btnVersus.hidden = isMobile;
+  arcadeOverlay.addEventListener("cancel", (e) => e.preventDefault());
+  document.getElementById("arcadeExit").addEventListener("click", backToSelection);
+  arcadeContinue.addEventListener("click", startArcadeMatch);
 
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d");
@@ -725,7 +825,11 @@ document.addEventListener("DOMContentLoaded", () => {
   updateSelectionUI();
 
   function persistSelection() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ p1: selectedP1, p2: selectedP2 }));
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ p1: selectedP1, p2: selectedP2 }));
+    } catch (_) {
+      // A seleção continua disponível nesta partida quando o armazenamento é bloqueado.
+    }
   }
 
   function resizeCanvas() {
@@ -747,7 +851,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   window.addEventListener("keydown", (e) => {
     keys[e.key.toLowerCase()] = true;
-    if (["arrowup","arrowdown","arrowleft","arrowright"," "].includes(e.key.toLowerCase())) e.preventDefault();
+    if (!e.target.closest?.("button, a, dialog") &&
+        ["arrowup","arrowdown","arrowleft","arrowright"," "].includes(e.key.toLowerCase())) e.preventDefault();
   }, { passive:false });
 
   window.addEventListener("keyup", (e) => {
@@ -1000,8 +1105,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const dur = Math.max(0.05, ms / 1000);
       const now = audioCtx.currentTime;
-
-      for (const h of Array.from(this.active)) {
+      const fading = Array.from(this.active);
+      for (const h of fading) {
         try {
           h.gain.gain.cancelScheduledValues(now);
           h.gain.gain.setValueAtTime(h.gain.gain.value, now);
@@ -1009,7 +1114,13 @@ document.addEventListener("DOMContentLoaded", () => {
         } catch (_) {}
       }
 
-      setTimeout(() => this.stopAll(), ms + 60);
+      setTimeout(() => {
+        for (const h of fading) {
+          try { h.src.stop(); } catch (_) {}
+          this.active.delete(h);
+          if (this.music === h) this.music = null;
+        }
+      }, ms + 60);
     }
   };
 
@@ -1028,11 +1139,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if (tapAudio) tapAudio.style.display = "block";
 
-    btnStartGame.addEventListener("click", async (e) => {
-      e.preventDefault();
-      await unlockAudioFromGesture();
-      startArena();
-    });
+  btnStartGame.addEventListener("click", () => startArena());
+  btnVersus.addEventListener("click", () => startArena("versus"));
 
   const onFirstGesture = () => {
     unlockAudioFromGesture();
@@ -1114,10 +1222,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function waitStageBackground(){
     return new Promise((resolve) => {
-      if (stage.loaded && stage.bg.naturalWidth > 0) return resolve();
-      const done = () => resolve();
-      stage.bg.addEventListener("load", done, { once:true });
-      stage.bg.addEventListener("error", done, { once:true });
+      if (stage.bg.complete) return resolve();
+      const done = () => {
+        stage.bg.removeEventListener("load", done);
+        stage.bg.removeEventListener("error", done);
+        resolve();
+      };
+      stage.bg.addEventListener("load", done);
+      stage.bg.addEventListener("error", done);
     });
   }
 
@@ -1345,7 +1457,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const prevX = this.x;
 
-      this.x += (vx * this.speed + this.knockback) * (delta * 120);
+      const horizontalSpeed = this.speed * (this.isJumping ? AIR_SPEED_MULT : 1);
+      this.x += (vx * horizontalSpeed + this.knockback) * (delta * 120);
       this.y += vy * this.speed * (delta * 120);
       this.knockback *= 0.85;
 
@@ -1370,7 +1483,11 @@ document.addEventListener("DOMContentLoaded", () => {
         const distH = Math.abs(this.x + this.w / 2 - (opp.x + opp.w / 2));
         const distV = Math.abs(this.y + this.z - (opp.y + opp.z));
 
-        let hit = (distH < this.range && distV < 110);
+        const heightAdvantage = opp.z - this.z;
+        const diving = this.isJumping && this.jumpV > 0 && heightAdvantage >= AIR_ATTACK_CLEARANCE;
+        const outOfGroundReach = !this.isJumping && heightAdvantage <= -AIR_ATTACK_CLEARANCE;
+        let hit = distH < this.range && !outOfGroundReach &&
+          distV < (diving ? AIR_ATTACK_REACH : 110);
 
         if (!isMobile) {
           const DESKTOP_DEPTH_TOL = 0.18;
@@ -1457,6 +1574,20 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  const ARCADE_ENDINGS = {
+    chaves: "Com o troféu nas mãos, Chaves organizou um piquenique no pátio. Cada vizinho trouxe alguma coisa, e dessa vez havia sanduíche de presunto para todo mundo.",
+    quico: "Quico exibiu o troféu na janela até perceber que ninguém conseguia vê-lo da rua. Levou a taça para o pátio e chamou a turma para uma foto.",
+    nhonho: "Nhonho gastou o prêmio numa festa de churros no pátio. Quando pediram um discurso, ele já estava servindo a segunda rodada.",
+    girafales: "O Professor Girafales levou a taça para a sala de aula e pediu uma redação sobre a final. A turma só aceitou com uma condição: ele também teria de escrever.",
+    florinda: "Dona Florinda colocou o troféu no restaurante e criou o café da campeã. Na primeira tarde, a vila inteira apareceu para provar.",
+    madruga: "Seu Madruga usou o prêmio para consertar o telhado. Na primeira chuva sem goteiras, decidiu que aquela tinha sido a sua maior vitória.",
+    pops: "Pops organizou uma cerimônia de premiação no pátio e preparou medalhas de papel para toda a turma. A última ela guardou para si.",
+    chiquinha: "A Chiquinha montou um museu do torneio no pátio e cobrou um botão de entrada. Ao fim da tarde, já tinha botões suficientes para consertar o vestido.",
+    barriga: "O Senhor Barriga levou a taça para casa, mas voltou no dia seguinte com uma surpresa: o próximo torneio teria arquibancada e entrada gratuita."
+  };
+
+  let arcade = null;
+  let arenaLoading = false;
   let gameStarted = false;
   let lastTime = 0;
   let p1 = null, p2 = null;
@@ -1488,18 +1619,80 @@ document.addEventListener("DOMContentLoaded", () => {
     drawStyledText("VS", VIRTUAL_WIDTH / 2, 85, 40, "center", "#FFD700", "#000");
   }
 
-  function initBattle() {
-    persistSelection();
+  function showArcadeResult(won) {
+    if (won) arcade.defeated.add(p2.key);
+    const next = arcade.opponents.find(key => !arcade.defeated.has(key));
+    const completed = !next;
+    const upcoming = next;
 
-    const p1Key = charData[selectedP1] ? selectedP1 : "nhonho";
-    const p2Key = charData[selectedP2] ? selectedP2 : "madruga";
+    arcadeTitle.textContent = completed ? charData[arcade.player].name + " É CAMPEÃO DA VILA!"
+      : won ? "Próximo adversário: " + CHAR_UI[next] : "Fim de jogo";
+    arcadeStatus.textContent = completed ? ARCADE_ENDINGS[arcade.player]
+      : `${arcade.defeated.size} de ${arcade.opponents.length} adversários derrotados` +
+        (won ? "" : ` · Revanche contra ${CHAR_UI[upcoming]}`);
+    arcadeCredits.hidden = !completed;
+    arcadeContinue.hidden = completed;
+    arcadeContinue.textContent = won ? "Lutar" : "Tentar novamente";
+
+    arcadeRoster.replaceChildren(...arcade.opponents.map(key => {
+      const defeated = arcade.defeated.has(key);
+      const card = document.createElement("li");
+      card.className = "arcade-fighter";
+      card.classList.toggle("is-defeated", defeated);
+      card.classList.toggle("is-next", key === upcoming);
+
+      const portrait = document.createElement("img");
+      portrait.src = `${IMG_BASE}${key}.jpg`;
+      portrait.alt = "";
+      const status = document.createElement("small");
+      status.textContent = defeated ? "Derrotado" : key === upcoming ? "Próximo" : "Na fila";
+      card.append(portrait, CHAR_UI[key], status);
+      return card;
+    }));
+
+    arcadeOverlay.showModal();
+    (completed ? document.getElementById("arcadeExit") : arcadeContinue).focus();
+  }
+
+  async function startArcadeMatch() {
+    if (arenaLoading || !arcadeOverlay.open) return;
+    const opponent = arcade.opponents.find(key => !arcade.defeated.has(key));
+    if (!opponent) return;
+
+    arenaLoading = true;
+    arcadeOverlay.close();
+    AudioEngine.stopAll();
+    showLoading("Preparando a próxima luta…");
+    progressInit(2);
+
+    try {
+      await loadFightStage(STAGE_BY_CHARACTER[opponent] || "vila");
+      p1Wins = p2Wins = 0;
+      currentRound = 1;
+      particles.length = 0;
+      screenShake = flash = 0;
+      initBattle();
+    } finally {
+      hideLoading();
+      arenaLoading = false;
+    }
+  }
+
+  let arcadeJumpReadyAt = 0;
+
+  function initBattle() {
+    arcadeJumpReadyAt = 0;
+    const p1Key = arcade?.player ?? selectedP1;
+    const p2Key = arcade ? arcade.opponents.find(key => !arcade.defeated.has(key)) : selectedP2;
 
     p1 = new Fighter(250, 320, true,  p1Key);
     p2 = new Fighter(850, 320, false, p2Key);
 
     roundActive = true;
     message = "ROUND " + currentRound;
-    setTimeout(() => (message = ""), 1500);
+    setTimeout(() => {
+      if (roundActive) message = "";
+    }, 1500);
 
     playSfx("round", VOL.round);
   }
@@ -1534,6 +1727,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (p1Wins === 2 || p2Wins === 2) {
         message = winner.name + " VENCEU!";
         AudioEngine.fadeOutAll(FADE_OUT_MS);
+        if (arcade) setTimeout(() => showArcadeResult(winner === p1), 1200);
       } else {
         message = "VENCEDOR: " + winner.name;
         setTimeout(() => {
@@ -1559,28 +1753,29 @@ document.addEventListener("DOMContentLoaded", () => {
     btnReset.addEventListener("click", doReset, { passive:false });
   }
 
-  function mobileAIForP2(){
-    if (!isMobile) return;
-    if (!roundActive) return;
-    if (!p1 || !p2) return;
-
-    keys["arrowup"] = false;
-    keys["arrowdown"] = false;
-    keys["arrowleft"] = false;
-    keys["arrowright"] = false;
-    keys["enter"] = false;
-    keys["shift"] = false;
-
+  function arcadeAIForP2(now){
     const dx = p1.x - p2.x;
     const dy = p1.y - p2.y;
+    const distance = Math.abs(dx);
+    const aligned = Math.abs(dy) <= 10;
+    const heightAdvantage = p1.z - p2.z;
+    const jumpIn = aligned && !p2.isJumping && !p1.isJumping &&
+      now >= arcadeJumpReadyAt && distance < p2.range + 100 &&
+      (distance > p2.range - 45 || keys[p1.controls.punch] || p1.punching);
+    const movingCloser = distance > (p2.isJumping || jumpIn ? 60 : p2.range - 35);
 
-    if (Math.abs(dx) > 140) {
-      keys[dx < 0 ? "arrowleft" : "arrowright"] = true;
-    } else {
-      if (Math.abs(dy) > 20) keys[dy < 0 ? "arrowup" : "arrowdown"] = true;
-      if (Math.random() > 0.86) keys["enter"] = true;
-      if (Math.random() > 0.975) keys["shift"] = true;
-    }
+    keys["arrowup"] = !aligned && dy < 0;
+    keys["arrowdown"] = !aligned && dy > 0;
+    keys["arrowleft"] = movingCloser && dx < 0;
+    keys["arrowright"] = movingCloser && dx > 0;
+    keys["shift"] = jumpIn;
+
+    if (jumpIn) arcadeJumpReadyAt = now + 1250;
+
+    const canDive = p2.isJumping && p2.jumpV > 0 &&
+      heightAdvantage >= AIR_ATTACK_CLEARANCE + 8 && heightAdvantage <= AIR_ATTACK_REACH - 15;
+    const canPunch = !p2.isJumping && heightAdvantage > -AIR_ATTACK_CLEARANCE;
+    keys["enter"] = !jumpIn && aligned && distance < p2.range - 10 && (canDive || canPunch);
   }
 
   function drawStageBackground(){
@@ -1604,7 +1799,7 @@ document.addEventListener("DOMContentLoaded", () => {
     ctx.clearRect(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
 
     applyMobileKeysFromJoy();
-    if (roundActive && isMobile) mobileAIForP2();
+    if (roundActive && arcade) arcadeAIForP2(t);
 
     ctx.save();
     if (screenShake > 0) {
@@ -1661,10 +1856,24 @@ document.addEventListener("DOMContentLoaded", () => {
     requestAnimationFrame(loop);
   }
 
-  async function startArena() {
-    if (gameStarted) return;
-    
-    btnStartGame.style.display = "none";
+  async function loadFightStage(stageName) {
+    setStageName(stageName);
+    await trackTask("Carregando cenário…", waitStageBackground);
+    await trackTask("Carregando áudio…", () => playStageMusic(stageName));
+  }
+
+  async function startArena(mode = "arcade") {
+    if (gameStarted || arenaLoading) return;
+    arenaLoading = true;
+    startActions.hidden = true;
+    if (mode === "arcade") {
+      const opponents = Object.keys(CHAR_UI).filter(key => key !== selectedP1);
+      const ordered = opponents.includes(selectedP2)
+        ? [selectedP2, ...opponents.filter(key => key !== selectedP2)]
+        : opponents;
+      arcade = { player: selectedP1, opponents: ordered, defeated: new Set() };
+    }
+    telaSelecao.style.display = "none";
 
     const spriteTasksCount = charKeys.length * 6;
     const stageTaskCount = 1;
@@ -1675,9 +1884,10 @@ document.addEventListener("DOMContentLoaded", () => {
     progressInit(TOTAL);
 
     try {
+      await unlockAudioFromGesture();
       stopSelectMusicFade(650);
+      persistSelection();
 
-      //telaSelecao.style.display = "none";
       arenaWrap.style.display = "block";
       if (uiHint) uiHint.style.display = "none";
       if (isMobile && mobileHUD) mobileHUD.style.display = "block";
@@ -1695,24 +1905,17 @@ document.addEventListener("DOMContentLoaded", () => {
         await trackTask(`Carregando ${k}_walk2…`, () => waitImage(pack.walk2));
       }
 
-      const p1Key = charData[selectedP1] ? selectedP1 : "chaves";
-      const p2Key = charData[selectedP2] ? selectedP2 : "madruga";
-      const stageName = pickStageFromSelection(p1Key, p2Key);
-
-      setStageName(stageName);
-      await trackTask("Carregando cenário…", () => waitStageBackground());
-
-      await trackTask("Carregando áudio…", async () => {
-        await unlockAudioFromGesture();
-        const ok = await playStageMusic(stageName);
-        if (!ok) setLoading("Áudio pendente (toque para habilitar)");
-      });
+      const firstOpponent = arcade?.opponents[0] ?? selectedP2;
+      const stageName = arcade ? STAGE_BY_CHARACTER[firstOpponent]
+        : pickStageFromSelection(selectedP1, firstOpponent);
+      await loadFightStage(stageName);
 
       initBattle();
       gameStarted = true;
     
     } finally {
       hideLoading();
+      arenaLoading = false;
     }
   }
 
@@ -1728,8 +1931,7 @@ const tryStart = (e) => {
         setPickMode(pickMode);
       }
     
-      if (e.key === "Enter" && !gameStarted) {
-        await unlockAudioFromGesture();
+      if (e.key === "Enter" && !e.repeat && !gameStarted && !e.target.closest?.("button")) {
         startArena();
       }
     
