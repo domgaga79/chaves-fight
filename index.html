@@ -152,6 +152,42 @@
       background: transparent;
       touch-action: none;
     }
+    #joyPad {
+      position: absolute;
+      width: 88px;
+      height: 88px;
+      left: var(--joy-x, 68px);
+      top: var(--joy-y, calc(100% - 68px));
+      transform: translate(-50%, -50%);
+      border: 2px solid #ffffff70;
+      border-radius: 50%;
+      background: #10182d66;
+      pointer-events: none;
+      display: grid;
+      place-items: center;
+    }
+    #joyPad::after {
+      content: "";
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      background: #f6cd6bcc;
+      transform: translate(var(--joy-dx, 0px), var(--joy-dy, 0px));
+    }
+    #btnNextRound, #arcadeTip {
+      position: fixed;
+      z-index: 95;
+      left: 50%;
+      transform: translateX(-50%);
+      color: white;
+      background: #141824ed;
+      border: 1px solid #f6cd6b;
+      border-radius: 10px;
+      font: 700 15px system-ui;
+      padding: 10px 14px;
+    }
+    #btnNextRound { top: 62%; min-height: 44px; cursor: pointer; }
+    #arcadeTip { top: 23%; width: max-content; max-width: 80vw; text-align: center; pointer-events: none; }
     .mBtn{
       pointer-events: auto;
       position: absolute;
@@ -536,8 +572,10 @@
       </div>
     </dialog>
 
-    <div id="mobileHUD" aria-hidden="true">
-      <div id="joyArea"></div>
+    <button id="btnNextRound" type="button" hidden>Próximo round</button>
+    <p id="arcadeTip" hidden>Desvie do salto e ataque quando o rival pousar.</p>
+    <div id="mobileHUD">
+      <div id="joyArea" aria-hidden="true"><span id="joyPad"></span></div>
       <button class="mBtn" id="btnReset" aria-label="Reiniciar (voltar)">↻</button>
       <button class="mBtn" id="btnJump"  aria-label="Pular">⤴</button>
       <button class="mBtn" id="btnPunch" aria-label="Soco">👊</button>
@@ -657,6 +695,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const mobileHUD = document.getElementById("mobileHUD");
   const joyArea   = document.getElementById("joyArea");
+  const joyPad = document.getElementById("joyPad");
+  const btnNextRound = document.getElementById("btnNextRound");
+  const arcadeTip = document.getElementById("arcadeTip");
   const btnPunch  = document.getElementById("btnPunch");
   const btnJump   = document.getElementById("btnJump");
   const btnReset  = document.getElementById("btnReset");
@@ -881,12 +922,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
     joy.dx = (dx / d) * k;
     joy.dy = (dy / d) * k;
+    joyPad.style.setProperty("--joy-dx", `${joy.dx * 24}px`);
+    joyPad.style.setProperty("--joy-dy", `${joy.dy * 24}px`);
   }
 
   function applyMobileKeysFromJoy(){
     if (!isMobile) return;
 
-    const dead = 0.22;
+    const dead = 0.16;
     const x = Math.abs(joy.dx) < dead ? 0 : joy.dx;
     const y = Math.abs(joy.dy) < dead ? 0 : joy.dy;
 
@@ -911,10 +954,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
     joyArea.addEventListener("pointerdown", (e) => {
       prevent(e);
+      if (joy.active) return;
       joy.active = true;
       joy.id = e.pointerId;
       joy.cx = e.clientX;
       joy.cy = e.clientY;
+      const area = joyArea.getBoundingClientRect();
+      joyPad.style.setProperty("--joy-x", `${joy.cx - area.left}px`);
+      joyPad.style.setProperty("--joy-y", `${joy.cy - area.top}px`);
       setJoyFromPointer(e);
       joyArea.setPointerCapture(e.pointerId);
     }, { passive:false });
@@ -931,11 +978,13 @@ document.addEventListener("DOMContentLoaded", () => {
       joy.active = false;
       joy.id = null;
       joy.dx = 0; joy.dy = 0;
+      joyPad.removeAttribute("style");
       applyMobileKeysFromJoy();
       try { joyArea.releasePointerCapture(e.pointerId); } catch(_){}
     };
     joyArea.addEventListener("pointerup", endJoy, { passive:false });
     joyArea.addEventListener("pointercancel", endJoy, { passive:false });
+    joyArea.addEventListener("lostpointercapture", endJoy, { passive:false });
 
     const press = (el, fn) => {
       el.addEventListener("pointerdown", (e) => { prevent(e); fn(); }, { passive:false });
@@ -1215,32 +1264,16 @@ document.addEventListener("DOMContentLoaded", () => {
     AudioEngine.play(key, { volume: (kind === "win") ? VOL.win : VOL.lose });
   }
 
-  const stage = {
-    name: "vila",
-    bg: new Image(),
-    loaded: false
-  };
+  const stage = { bg: null };
+  const stageImages = new Map();
 
-  function setStageName(stageName){
-    stage.name = stageName || "vila";
-    stage.loaded = false;
-
-    stage.bg.onload = () => stage.loaded = true;
-    stage.bg.onerror = () => stage.loaded = false;
-    stage.bg.src = `${SCENARIO_DIR}${stage.name}.png`;
-  }
-
-  function waitStageBackground(){
-    return new Promise((resolve) => {
-      if (stage.bg.complete) return resolve();
-      const done = () => {
-        stage.bg.removeEventListener("load", done);
-        stage.bg.removeEventListener("error", done);
-        resolve();
-      };
-      stage.bg.addEventListener("load", done);
-      stage.bg.addEventListener("error", done);
-    });
+  function getStageImage(name) {
+    if (!stageImages.has(name)) {
+      const img = new Image();
+      img.src = `${SCENARIO_DIR}${name}.png`;
+      stageImages.set(name, img);
+    }
+    return stageImages.get(name);
   }
 
   const charData = {
@@ -1271,44 +1304,39 @@ document.addEventListener("DOMContentLoaded", () => {
     return -22 / w;
   }
 
-  function createImageWithFallback(primarySrc, fallbackSrc=null){
-    const img = new Image();
-    let triedFallback = false;
-    img.onload = () => {};
-    img.onerror = () => {
-      if (fallbackSrc && !triedFallback){
-        triedFallback = true;
-        img.src = fallbackSrc;
-      }
-    };
-    img.src = primarySrc;
-    return img;
-  }
-
   const assets = {};
-  const charKeys = Object.keys(charData);
-
-  charKeys.forEach((k) => {
-    const cap = CHAR_UI[k] || (k.charAt(0).toUpperCase() + k.slice(1));
-    const base = `${IMG_BASE}${k}`;
-    const fallbackBase = `${IMG_BASE}${cap}`;
-
-    assets[k] = {
-      normal:     createImageWithFallback(`${base}.png`,            `${fallbackBase}.png`),
-      punch:      createImageWithFallback(`${base}_punch.png`,      `${fallbackBase}_punch.png`),
-      jump:       createImageWithFallback(`${base}_jump.png`,       `${fallbackBase}_jump.png`),
-      jumpPunch:  createImageWithFallback(`${base}_jump_punch.png`, `${fallbackBase}_jump_punch.png`),
-      walk1:      createImageWithFallback(`${base}_walk1.png`,      `${fallbackBase}_walk1.png`),
-      walk2:      createImageWithFallback(`${base}_walk2.png`,      `${fallbackBase}_walk2.png`)
-    };
-  });
+  const spriteLoads = new Map();
 
   function waitImage(img) {
-    return new Promise((resolve) => {
-      if (img.complete && img.naturalWidth > 0) return resolve();
-      img.onload = () => resolve();
-      img.onerror = () => resolve();
+    if (img.complete) return Promise.resolve();
+    return new Promise(resolve => {
+      function finish() {
+        img.removeEventListener("load", finish);
+        img.removeEventListener("error", finish);
+        resolve();
+      }
+      img.addEventListener("load", finish);
+      img.addEventListener("error", finish);
     });
+  }
+
+  function loadFighterSprites(key) {
+    if (!spriteLoads.has(key)) {
+      const pack = assets[key] = {};
+      const sprites = { normal: "", punch: "_punch", jump: "_jump",
+        jumpPunch: "_jump_punch", walk1: "_walk1", walk2: "_walk2" };
+      const load = Promise.all(Object.entries(sprites).map(async ([pose, suffix]) => {
+        const img = pack[pose] = new Image();
+        img.src = `${IMG_BASE}${key}${suffix}.png`;
+        await waitImage(img);
+        if (!canUse(img)) {
+          img.src = `${IMG_BASE}${CHAR_UI[key]}${suffix}.png`;
+          await waitImage(img);
+        }
+      }));
+      spriteLoads.set(key, load);
+    }
+    return spriteLoads.get(key);
   }
 
   function canUse(img){
@@ -1404,6 +1432,8 @@ document.addEventListener("DOMContentLoaded", () => {
       this._jumpHeld = false;
 
       this.punching = false;
+      this.punchTimeLeft = 0;
+      this.missedPunches = 0;
       this.facingLeft = false;
       this._punchSfxCd = 0;
 
@@ -1430,6 +1460,8 @@ document.addEventListener("DOMContentLoaded", () => {
     update(delta, opp) {
       if (this.hp <= 0 || !roundActive) return;
 
+      this.punchTimeLeft = Math.max(0, this.punchTimeLeft - delta);
+      this.punching = this.punchTimeLeft > 0.00001;
       if (this._punchSfxCd > 0) this._punchSfxCd--;
       if (this.hitFlash > 0) this.hitFlash--;
 
@@ -1489,6 +1521,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       if (keys[this.controls.punch] && !this.punching) {
         this.punching = true;
+        this.punchTimeLeft = 0.25;
 
         const distH = Math.abs(this.x + this.w / 2 - (opp.x + opp.w / 2));
         const distV = Math.abs(this.y + this.z - (opp.y + opp.z));
@@ -1519,13 +1552,13 @@ document.addEventListener("DOMContentLoaded", () => {
           }
           opp.takeDamage(10, this.facingLeft ? -1 : 1);
         } else {
+          this.missedPunches++;
           if (this._punchSfxCd <= 0) {
             playSfx("whiff", VOL.whiff);
             this._punchSfxCd = 14;
           }
         }
 
-        setTimeout(() => (this.punching = false), 250);
       }
     }
 
@@ -1571,6 +1604,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
       ctx.save();
 
+      const floorY = Math.min(VIRTUAL_HEIGHT - 7, topY - this.z + drawH - 12);
+      ctx.fillStyle = "rgba(0, 0, 0, .38)";
+      ctx.beginPath();
+      ctx.ellipse(cx, floorY, Math.min(72, drawW * .23), 10, 0, 0, Math.PI * 2);
+      ctx.fill();
+
       if (this.hitFlash > 0) ctx.filter = "brightness(4) contrast(1.5)";
 
       ctx.translate(cx, cy);
@@ -1600,7 +1639,10 @@ document.addEventListener("DOMContentLoaded", () => {
   let arcade = null;
   let arenaLoading = false;
   let gameStarted = false;
-  let lastTime = 0;
+  const STEP_MS = 1000 / 60;
+  let lastTime = null;
+  let accumulatedMs = 0;
+  let fightTime = 0;
   let p1 = null, p2 = null;
   let p1Wins = 0, p2Wins = 0, currentRound = 1;
   let roundActive = false;
@@ -1615,7 +1657,7 @@ document.addEventListener("DOMContentLoaded", () => {
       ctx.fillRect(isP1 ? x : x - barW, 60, barW, 30);
 
       ctx.fillStyle = f.hp < 30 ? "#F00" : "#0F0";
-      const curW = (barW * f.hp) / f.maxHp;
+      const curW = barW * clamp01(f.hp / f.maxHp);
       ctx.fillRect(isP1 ? x : x - curW, 60, curW, 30);
 
       ctx.strokeStyle = "#FFF";
@@ -1679,10 +1721,13 @@ document.addEventListener("DOMContentLoaded", () => {
     arcadeOverlay.close();
     AudioEngine.stopAll();
     showLoading("Preparando a próxima luta…");
-    progressInit(2);
+    progressInit(3);
 
     try {
-      await loadFightStage(STAGE_BY_CHARACTER[opponent] || "vila");
+      await Promise.all([
+        trackTask("Carregando adversário…", () => loadFighterSprites(opponent)),
+        loadFightStage(STAGE_BY_CHARACTER[opponent] || "vila")
+      ]);
       p1Wins = p2Wins = 0;
       currentRound = 1;
       particles.length = 0;
@@ -1694,16 +1739,52 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  let arcadeJumpReadyAt = 0;
+  const arcadeTuning = [
+    { windup: 420, recovery: 560, jumpGap: 4200, punchGap: 930 },
+    { windup: 330, recovery: 475, jumpGap: 3200, punchGap: 740 },
+    { windup: 260, recovery: 390, jumpGap: 2450, punchGap: 590 }
+  ];
+  let cpu;
+  let roundTimer;
+  let tipTimer;
+
+  function startNextRound() {
+    if (btnNextRound.hidden) return;
+    clearTimeout(roundTimer);
+    currentRound++;
+    initBattle();
+    if (document.activeElement === btnNextRound) btnNextRound.blur();
+  }
+
+  btnNextRound.addEventListener("click", startNextRound);
 
   function initBattle() {
-    arcadeJumpReadyAt = 0;
+    accumulatedMs = 0;
+    fightTime = 0;
+    btnNextRound.hidden = true;
+    clearTimeout(tipTimer);
+    arcadeTip.hidden = true;
     const p1Key = arcade?.player ?? selectedP1;
     const p2Key = arcade ? arcade.opponents.find(key => !arcade.defeated.has(key)) : selectedP2;
 
     p1 = new Fighter(250, 320, true,  p1Key);
     p2 = new Fighter(850, 320, false, p2Key);
 
+    if (arcade) {
+      const stageIndex = arcade.defeated.size;
+      const tuning = arcadeTuning[stageIndex < 2 ? 0 : stageIndex < 6 ? 1 : 2];
+      cpu = { tuning, phase: "approach", readyAt: 0, jumpAt: tuning.jumpGap,
+        punishAt: Infinity, missesSeen: 0, airStrikeUsed: false };
+      const nextFighter = arcade.opponents[stageIndex + 1];
+      if (nextFighter) {
+        void loadFighterSprites(nextFighter);
+        getStageImage(STAGE_BY_CHARACTER[nextFighter] || "vila");
+      }
+      if (stageIndex === 0 && currentRound === 1) {
+        arcadeTip.hidden = false;
+        tipTimer = setTimeout(() => { arcadeTip.hidden = true; }, 4300);
+      }
+    }
     roundActive = true;
     message = "ROUND " + currentRound;
     setTimeout(() => {
@@ -1715,6 +1796,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   async function handleRoundEnd() {
     roundActive = false;
+    arcadeTip.hidden = true;
     flash = 1;
     screenShake = 40;
 
@@ -1746,12 +1828,10 @@ document.addEventListener("DOMContentLoaded", () => {
         if (arcade) setTimeout(() => showArcadeResult(winner === p1), 1200);
       } else {
         message = "VENCEDOR: " + winner.name;
-        setTimeout(() => {
-          currentRound++;
-          initBattle();
-        }, 2000);
+        btnNextRound.hidden = false;
+        roundTimer = setTimeout(startNextRound, 1400);
       }
-    }, 1500);
+    }, 950);
   }
 
   function backToSelection(){
@@ -1769,33 +1849,77 @@ document.addEventListener("DOMContentLoaded", () => {
     btnReset.addEventListener("click", doReset, { passive:false });
   }
 
-  function arcadeAIForP2(now){
+  function arcadeAIForP2(now) {
     const dx = p1.x - p2.x;
     const dy = p1.y - p2.y;
     const distance = Math.abs(dx);
     const aligned = Math.abs(dy) <= 10;
     const heightAdvantage = p1.z - p2.z;
-    const jumpIn = aligned && !p2.isJumping && !p1.isJumping &&
-      now >= arcadeJumpReadyAt && distance < p2.range + 100 &&
-      (distance > p2.range - 45 || keys[p1.controls.punch] || p1.punching);
-    const movingCloser = distance > (p2.isJumping || jumpIn ? 60 : p2.range - 35);
+    const { tuning } = cpu;
+    const jumpRange = p2.range + 45;
 
-    keys["arrowup"] = !aligned && dy < 0;
-    keys["arrowdown"] = !aligned && dy > 0;
-    keys["arrowleft"] = movingCloser && dx < 0;
-    keys["arrowright"] = movingCloser && dx > 0;
-    keys["shift"] = jumpIn;
+    keys.arrowup = keys.arrowdown = keys.arrowleft = keys.arrowright = false;
+    keys.enter = keys.shift = false;
 
-    if (jumpIn) arcadeJumpReadyAt = now + 1250;
+    if (cpu.missesSeen !== p1.missedPunches) {
+      cpu.missesSeen = p1.missedPunches;
+      if (cpu.phase === "approach" && aligned && distance < jumpRange &&
+          cpu.punishAt === Infinity && now >= cpu.jumpAt - tuning.jumpGap * .55) {
+        cpu.punishAt = now + 180;
+      }
+    }
 
-    const canDive = p2.isJumping && p2.jumpV > 0 &&
-      heightAdvantage >= AIR_ATTACK_CLEARANCE + 8 && heightAdvantage <= AIR_ATTACK_REACH - 15;
-    const canPunch = !p2.isJumping && heightAdvantage > -AIR_ATTACK_CLEARANCE;
-    keys["enter"] = !jumpIn && aligned && distance < p2.range - 10 && (canDive || canPunch);
+    if (cpu.phase === "windup" && now >= cpu.readyAt) {
+      keys.shift = true;
+      cpu.phase = "air";
+      cpu.airStrikeUsed = false;
+      cpu.jumpAt = now + tuning.jumpGap;
+      cpu.readyAt = now + STEP_MS * 2;
+    } else if (cpu.phase === "air" && !p2.isJumping && now >= cpu.readyAt) {
+      cpu.phase = "landing";
+      cpu.readyAt = now + tuning.recovery;
+    } else if ((cpu.phase === "landing" || cpu.phase === "retreat") && now >= cpu.readyAt) {
+      cpu.phase = "approach";
+    }
+
+    if (cpu.phase === "approach" && aligned && !p1.isJumping &&
+        distance < jumpRange && (now >= cpu.jumpAt || now >= cpu.punishAt)) {
+      cpu.phase = "windup";
+      cpu.readyAt = now + tuning.windup;
+      cpu.punishAt = Infinity;
+    }
+
+    if (cpu.phase === "windup" || cpu.phase === "landing") return;
+    if (cpu.phase === "retreat") {
+      const roomToRetreat = dx > 0 ? p2.x > 30 : p2.x < VIRTUAL_WIDTH - p2.w - 30;
+      keys.arrowleft = dx > 0 && roomToRetreat;
+      keys.arrowright = dx < 0 && roomToRetreat;
+      return;
+    }
+
+    const closeEnough = distance < p2.range - 10;
+    const movingCloser = distance > (cpu.phase === "air" ? 63 : p2.range - 35);
+    keys.arrowleft = movingCloser && dx < 0;
+    keys.arrowright = movingCloser && dx > 0;
+    keys.arrowup = !aligned && dy < 0;
+    keys.arrowdown = !aligned && dy > 0;
+
+    if (cpu.phase === "air") {
+      if (!cpu.airStrikeUsed && !p2.punching && aligned && closeEnough &&
+          p2.jumpV > 0 && heightAdvantage >= AIR_ATTACK_CLEARANCE + 8 &&
+          heightAdvantage <= AIR_ATTACK_REACH - 15) {
+        keys.enter = cpu.airStrikeUsed = true;
+      }
+    } else if (now >= cpu.readyAt && aligned && closeEnough &&
+        heightAdvantage > -AIR_ATTACK_CLEARANCE) {
+      keys.enter = true;
+      cpu.phase = "retreat";
+      cpu.readyAt = now + tuning.punchGap;
+    }
   }
 
   function drawStageBackground(){
-    if (stage.loaded && stage.bg.naturalWidth > 0) {
+    if (canUse(stage.bg)) {
       ctx.drawImage(stage.bg, 0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
     } else {
       ctx.fillStyle = "#0b0f14";
@@ -1804,7 +1928,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function loop(t) {
-    const delta = (t - lastTime) / 1000;
+    const elapsed = lastTime === null ? 0 : Math.min(t - lastTime, 100);
     lastTime = t;
 
     if (!gameStarted || !p1 || !p2) {
@@ -1815,7 +1939,15 @@ document.addEventListener("DOMContentLoaded", () => {
     ctx.clearRect(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
 
     applyMobileKeysFromJoy();
-    if (roundActive && arcade) arcadeAIForP2(t);
+    if (roundActive) accumulatedMs += elapsed;
+    while (roundActive && accumulatedMs + 0.00001 >= STEP_MS) {
+      accumulatedMs -= STEP_MS;
+      fightTime += STEP_MS;
+      if (arcade) arcadeAIForP2(fightTime);
+      p1.update(STEP_MS / 1000, p2);
+      p2.update(STEP_MS / 1000, p1);
+      if (p1.hp <= 0 || p2.hp <= 0) handleRoundEnd();
+    }
 
     ctx.save();
     if (screenShake > 0) {
@@ -1827,13 +1959,11 @@ document.addEventListener("DOMContentLoaded", () => {
     drawStageBackground();
     ctx.filter = "none";
 
-    if (roundActive) {
-      p1.update(delta, p2);
-      p2.update(delta, p1);
-    }
-
     const fighters = [p1, p2].sort((a, b) => a.y - b.y);
     fighters.forEach(f => f.draw(ctx));
+    if (roundActive && arcade && cpu.phase === "windup") {
+      drawStyledText("!", p2.x + p2.w / 2, p2.y - 24, 34, "center", "#ffd866", "#24202a");
+    }
 
     particles.forEach((p, i) => {
       p.x += p.vx;
@@ -1867,15 +1997,15 @@ document.addEventListener("DOMContentLoaded", () => {
       flash -= 0.05;
     }
 
-    if (roundActive && (p1.hp <= 0 || p2.hp <= 0)) handleRoundEnd();
-
     requestAnimationFrame(loop);
   }
 
   async function loadFightStage(stageName) {
-    setStageName(stageName);
-    await trackTask("Carregando cenário…", waitStageBackground);
-    await trackTask("Carregando áudio…", () => playStageMusic(stageName));
+    stage.bg = getStageImage(stageName);
+    await Promise.all([
+      trackTask("Carregando cenário…", () => waitImage(stage.bg)),
+      trackTask("Carregando áudio…", () => playStageMusic(stageName))
+    ]);
   }
 
   async function startArena(mode = "arcade") {
@@ -1891,13 +2021,12 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     telaSelecao.style.display = "none";
 
-    const spriteTasksCount = charKeys.length * 6;
-    const stageTaskCount = 1;
-    const audioTaskCount = 1;
-    const TOTAL = spriteTasksCount + stageTaskCount + audioTaskCount;
-
+    const firstOpponent = arcade?.opponents[0] ?? selectedP2;
+    const stageName = arcade ? STAGE_BY_CHARACTER[firstOpponent] || "vila"
+      : pickStageFromSelection(selectedP1, firstOpponent);
+    const firstFighters = [...new Set([selectedP1, firstOpponent])];
     showLoading("Carregando…");
-    progressInit(TOTAL);
+    progressInit(firstFighters.length + 2);
 
     try {
       await unlockAudioFromGesture();
@@ -1911,20 +2040,10 @@ document.addEventListener("DOMContentLoaded", () => {
       resizeCanvas();
       window.addEventListener("resize", resizeCanvas);
 
-      for (const k of charKeys){
-        const pack = assets[k];
-        await trackTask(`Carregando ${k}…`, () => waitImage(pack.normal));
-        await trackTask(`Carregando ${k}_punch…`, () => waitImage(pack.punch));
-        await trackTask(`Carregando ${k}_jump…`, () => waitImage(pack.jump));
-        await trackTask(`Carregando ${k}_jump_punch…`, () => waitImage(pack.jumpPunch));
-        await trackTask(`Carregando ${k}_walk1…`, () => waitImage(pack.walk1));
-        await trackTask(`Carregando ${k}_walk2…`, () => waitImage(pack.walk2));
-      }
-
-      const firstOpponent = arcade?.opponents[0] ?? selectedP2;
-      const stageName = arcade ? STAGE_BY_CHARACTER[firstOpponent]
-        : pickStageFromSelection(selectedP1, firstOpponent);
-      await loadFightStage(stageName);
+      await Promise.all([
+        ...firstFighters.map(key => trackTask(`Carregando ${CHAR_UI[key]}…`, () => loadFighterSprites(key))),
+        loadFightStage(stageName)
+      ]);
 
       initBattle();
       gameStarted = true;
